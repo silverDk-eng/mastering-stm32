@@ -1,0 +1,291 @@
+https://sourceware.org/pipermail/newlib/2022/019283.html
+
+[PATCH 1/1] Make __sdidinit unused
+Matthew Joyce matthew.joyce@embedded-brains.de
+Thu Feb 17 13:05:20 GMT 2022
+Previous message (by thread): [PATCH 0/1] Make __sdidinit unused
+Next message (by thread): [PATCH 1/1] Make __sdidinit unused
+Messages sorted by: [ date ] [ thread ] [ subject ] [ author ]
+From: Matt Joyce <matthew.joyce@embedded-brains.de>
+
+Remove dependency on __sdidinit member of struct _reent to check
+object initialization. Like __sdidinit, the __cleanup member of
+struct _reent is initialized in the __sinit() function. Checking
+initialization against __cleanup serves the same purpose and will
+reduce overhead in the __sfp() function in a follow up patch.
+---
+ libgloss/aarch64/syscalls.c      |  2 +-
+ libgloss/arm/syscalls.c          |  2 +-
+ newlib/libc/include/sys/reent.h  | 10 +++++++---
+ newlib/libc/machine/spu/c99ppe.h |  2 +-
+ newlib/libc/machine/spu/stdio.c  |  1 -
+ newlib/libc/reent/reent.c        |  2 +-
+ newlib/libc/stdio/findfp.c       | 11 ++---------
+ newlib/libc/stdio/local.h        |  6 +++---
+ newlib/libc/stdio/setvbuf.c      |  2 +-
+ newlib/libc/sys/arm/syscalls.c   |  2 +-
+ winsup/cygwin/cygtls.cc          |  4 ++--
+ winsup/cygwin/dcrt0.cc           | 10 ++++------
+ winsup/cygwin/thread.cc          |  4 ++--
+ 13 files changed, 26 insertions(+), 32 deletions(-)
+
+diff --git a/libgloss/aarch64/syscalls.c b/libgloss/aarch64/syscalls.c
+index 7343cc61f..5b4071893 100644
+--- a/libgloss/aarch64/syscalls.c
++++ b/libgloss/aarch64/syscalls.c
+@@ -124,7 +124,7 @@ extern void __sinit (struct _reent *);
+ #define CHECK_INIT(ptr) \
+   do						\
+     {						\
+-      if ((ptr) && !(ptr)->__sdidinit)		\
++      if ((ptr) && !(ptr)->__cleanup)		\
+ 	__sinit (ptr);				\
+     }						\
+   while (0)
+diff --git a/libgloss/arm/syscalls.c b/libgloss/arm/syscalls.c
+index fc394f94b..710a741ee 100644
+--- a/libgloss/arm/syscalls.c
++++ b/libgloss/arm/syscalls.c
+@@ -89,7 +89,7 @@ extern void   __sinit (struct _reent *);
+ #define CHECK_INIT(ptr) \
+   do						\
+     {						\
+-      if ((ptr) && !(ptr)->__sdidinit)		\
++      if ((ptr) && !(ptr)->__cleanup)		\
+ 	__sinit (ptr);				\
+     }						\
+   while (0)
+diff --git a/newlib/libc/include/sys/reent.h b/newlib/libc/include/sys/reent.h
+index e4e36170e..f8ecf8586 100644
+--- a/newlib/libc/include/sys/reent.h
++++ b/newlib/libc/include/sys/reent.h
+@@ -175,7 +175,7 @@ extern void   __sinit (struct _reent *);
+ # define _REENT_SMALL_CHECK_INIT(ptr)		\
+   do						\
+     {						\
+-      if ((ptr) && !(ptr)->__sdidinit)		\
++      if ((ptr) && !(ptr)->__cleanup)		\
+ 	__sinit (ptr);				\
+     }						\
+   while (0)
+@@ -389,7 +389,9 @@ struct _reent
+ 
+   char *_emergency;
+ 
+-  int __sdidinit;		/* 1 means stdio has been init'd */
++  /* No longer used, but member retained for binary compatibility.
++     Now, the __cleanup member is used to check initialization. */
++  int _unused_sdidinit;
+ 
+   int _unspecified_locale_info;	/* unused, reserved for locale stuff */
+   struct __locale_t *_locale;/* per-thread locale */
+@@ -626,7 +628,9 @@ struct _reent
+   int _unspecified_locale_info;	/* unused, reserved for locale stuff */
+   struct __locale_t *_locale;/* per-thread locale */
+ 
+-  int __sdidinit;		/* 1 means stdio has been init'd */
++  /* No longer used, but member retained for binary compatibility.
++     Now, the __cleanup member is used to check initialization. */
++  int _unused_sdidinit;
+ 
+   void (*__cleanup) (struct _reent *);
+ 
+diff --git a/newlib/libc/machine/spu/c99ppe.h b/newlib/libc/machine/spu/c99ppe.h
+index ccd2d257c..12a2cb3fb 100644
+--- a/newlib/libc/machine/spu/c99ppe.h
++++ b/newlib/libc/machine/spu/c99ppe.h
+@@ -104,7 +104,7 @@ FILE  *__sfp (struct _reent *);
+ #define __sfp_free(fp) ( (fp)->_fp = 0 )
+ 
+ #define CHECK_INIT(ptr) \
+-  do { if ((ptr) && !(ptr)->__sdidinit) __sinit (ptr); } while (0)
++  do { if ((ptr) && !(ptr)->__cleanup) __sinit (ptr); } while (0)
+ #define CHECK_STD_INIT(ptr) /* currently, do nothing */
+ #define CHECK_STR_INIT(ptr) /* currently, do nothing */
+ #endif /* __ASSEMBLER__ */
+diff --git a/newlib/libc/machine/spu/stdio.c b/newlib/libc/machine/spu/stdio.c
+index 2a308b8aa..87e4c406d 100644
+--- a/newlib/libc/machine/spu/stdio.c
++++ b/newlib/libc/machine/spu/stdio.c
+@@ -66,7 +66,6 @@ void
+ __sinit (struct _reent *s)
+ {
+   s->__cleanup = __cleanup;
+-  s->__sdidinit = 1;
+ 
+   s->_stdin = &s->__sf[0];
+   s->_stdin->_fp = SPE_STDIN;
+diff --git a/newlib/libc/reent/reent.c b/newlib/libc/reent/reent.c
+index 7c57e2019..5a04fcf62 100644
+--- a/newlib/libc/reent/reent.c
++++ b/newlib/libc/reent/reent.c
+@@ -118,7 +118,7 @@ _reclaim_reent (struct _reent *ptr)
+ 	  if (ptr->_sig_func)
+ 	_free_r (ptr, ptr->_sig_func);*/
+ 
+-      if (ptr->__sdidinit)
++      if (ptr->__cleanup)
+ 	{
+ 	  /* cleanup won't reclaim memory 'coz usually it's run
+ 	     before the program exits, and who wants to wait for that? */
+diff --git a/newlib/libc/stdio/findfp.c b/newlib/libc/stdio/findfp.c
+index 896be99e9..9877c1f2c 100644
+--- a/newlib/libc/stdio/findfp.c
++++ b/newlib/libc/stdio/findfp.c
+@@ -152,7 +152,7 @@ __sfp (struct _reent *d)
+ 
+   _newlib_sfp_lock_start ();
+ 
+-  if (!_GLOBAL_REENT->__sdidinit)
++  if (_GLOBAL_REENT->__cleanup == NULL)
+     __sinit (_GLOBAL_REENT);
+   for (g = &_GLOBAL_REENT->__sglue;; g = g->_next)
+     {
+@@ -246,7 +246,7 @@ __sinit (struct _reent *s)
+ {
+   __sinit_lock_acquire ();
+ 
+-  if (s->__sdidinit)
++  if (s->__cleanup)
+     {
+       __sinit_lock_release ();
+       return;
+@@ -264,11 +264,6 @@ __sinit (struct _reent *s)
+ #else
+   s->__sglue._niobs = 0;
+   s->__sglue._iobs = NULL;
+-  /* Avoid infinite recursion when calling __sfp  for _GLOBAL_REENT.  The
+-     problem is that __sfp checks for _GLOBAL_REENT->__sdidinit and calls
+-     __sinit if it's 0. */
+-  if (s == _GLOBAL_REENT)
+-    s->__sdidinit = 1;
+ # ifndef _REENT_GLOBAL_STDIO_STREAMS
+   s->_stdin = __sfp(s);
+   s->_stdout = __sfp(s);
+@@ -294,8 +289,6 @@ __sinit (struct _reent *s)
+   stderr_init (s->_stderr);
+ #endif /* _REENT_GLOBAL_STDIO_STREAMS */
+ 
+-  s->__sdidinit = 1;
+-
+   __sinit_lock_release ();
+ }
+ 
+diff --git a/newlib/libc/stdio/local.h b/newlib/libc/stdio/local.h
+index 84ff40b49..f63c5fb10 100644
+--- a/newlib/libc/stdio/local.h
++++ b/newlib/libc/stdio/local.h
+@@ -202,7 +202,7 @@ extern _READ_WRITE_RETURN_TYPE __swrite64 (struct _reent *, void *,
+   do								\
+     {								\
+       struct _reent *_check_init_ptr = (ptr);			\
+-      if ((_check_init_ptr) && !(_check_init_ptr)->__sdidinit)	\
++      if ((_check_init_ptr) && !(_check_init_ptr)->__cleanup)	\
+ 	__sinit (_check_init_ptr);				\
+       if ((fp) == (FILE *)&__sf_fake_stdin)			\
+ 	(fp) = _stdin_r(_check_init_ptr);			\
+@@ -217,7 +217,7 @@ extern _READ_WRITE_RETURN_TYPE __swrite64 (struct _reent *, void *,
+   do								\
+     {								\
+       struct _reent *_check_init_ptr = (ptr);			\
+-      if ((_check_init_ptr) && !(_check_init_ptr)->__sdidinit)	\
++      if ((_check_init_ptr) && !(_check_init_ptr)->__cleanup)	\
+ 	__sinit (_check_init_ptr);				\
+     }								\
+   while (0)
+@@ -227,7 +227,7 @@ extern _READ_WRITE_RETURN_TYPE __swrite64 (struct _reent *, void *,
+   do								\
+     {								\
+       struct _reent *_check_init_ptr = (ptr);			\
+-      if ((_check_init_ptr) && !(_check_init_ptr)->__sdidinit)	\
++      if ((_check_init_ptr) && !(_check_init_ptr)->__cleanup)	\
+ 	__sinit (_check_init_ptr);				\
+     }								\
+   while (0)
+diff --git a/newlib/libc/stdio/setvbuf.c b/newlib/libc/stdio/setvbuf.c
+index f9eeefd1c..46c58a7b8 100644
+--- a/newlib/libc/stdio/setvbuf.c
++++ b/newlib/libc/stdio/setvbuf.c
+@@ -174,7 +174,7 @@ nbf:
+    * We're committed to buffering from here, so make sure we've
+    * registered to flush buffers on exit.
+    */
+-  if (!reent->__sdidinit)
++  if (!reent->__cleanup)
+     __sinit(reent);
+ 
+ #ifdef _FSEEK_OPTIMIZATION
+diff --git a/newlib/libc/sys/arm/syscalls.c b/newlib/libc/sys/arm/syscalls.c
+index 1f7222980..4b9be701a 100644
+--- a/newlib/libc/sys/arm/syscalls.c
++++ b/newlib/libc/sys/arm/syscalls.c
+@@ -60,7 +60,7 @@ extern void   __sinit (struct _reent *);
+ #define CHECK_INIT(ptr) \
+   do						\
+     {						\
+-      if ((ptr) && !(ptr)->__sdidinit)		\
++      if ((ptr) && !(ptr)->__cleanup)		\
+ 	__sinit (ptr);				\
+     }						\
+   while (0)
+diff --git a/winsup/cygwin/cygtls.cc b/winsup/cygwin/cygtls.cc
+index 1a2213d1f..239a9d7e1 100644
+--- a/winsup/cygwin/cygtls.cc
++++ b/winsup/cygwin/cygtls.cc
+@@ -60,8 +60,8 @@ _cygtls::init_thread (void *x, DWORD (*func) (void *, void *))
+ 	  local_clib._stdin = _GLOBAL_REENT->_stdin;
+ 	  local_clib._stdout = _GLOBAL_REENT->_stdout;
+ 	  local_clib._stderr = _GLOBAL_REENT->_stderr;
+-	  local_clib.__sdidinit = _GLOBAL_REENT->__sdidinit ? -1 : 0;
+-	  local_clib.__cleanup = _GLOBAL_REENT->__cleanup;
++	  local_clib.__cleanup = _GLOBAL_REENT->__cleanup ?
++	    (void *)(uintptr_t)-1 : NULL;
+ 	  local_clib.__sglue._niobs = 3;
+ 	  local_clib.__sglue._iobs = &_GLOBAL_REENT->__sf[0];
+ 	}
+diff --git a/winsup/cygwin/dcrt0.cc b/winsup/cygwin/dcrt0.cc
+index f3d09c169..16ca5888c 100644
+--- a/winsup/cygwin/dcrt0.cc
++++ b/winsup/cygwin/dcrt0.cc
+@@ -824,15 +824,13 @@ main_thread_sinit ()
+      As soon as the main thread calls a stdio function, this would be
+      rectified.  But if another thread calls a stdio function on
+      stdin/out/err before the main thread does, all the required
+-     initialization of stdin/out/err will be done, but _REENT->__sdidinit
+-     is *still* 0.  This in turn will result in a call to __sinit in the
++     initialization of stdin/out/err will be done, but _REENT->__cleanup
++     is *still* NULL.  This in turn will result in a call to __sinit in the
+      wrong spot.  The input or output buffer will be NULLed and nothing is
+      read or written in the first stdio function call in the main thread.
+ 
+-     To fix this issue we have to copy over the relevant part of _GLOBAL_REENT
+-     to _REENT here again. */
+-  _REENT->__sdidinit = -1;
+-  _REENT->__cleanup = _GLOBAL_REENT->__cleanup;
++     To fix this issue we set __cleanup to -1 here. */
++  _REENT->__cleanup = (void *)(uintptr_t)-1;
+ }
+ 
+ /* Take over from libc's crt0.o and start the application. Note the
+diff --git a/winsup/cygwin/thread.cc b/winsup/cygwin/thread.cc
+index fcfd75c79..3c3a2f3b3 100644
+--- a/winsup/cygwin/thread.cc
++++ b/winsup/cygwin/thread.cc
+@@ -564,8 +564,8 @@ pthread::exit (void *value_ptr)
+       mutex.unlock ();
+     }
+ 
+-  if (_my_tls.local_clib.__sdidinit < 0)
+-    _my_tls.local_clib.__sdidinit = 0;
++  if (_my_tls.local_clib.__cleanup == (void *)(uintptr_t)-1)
++    _my_tls.local_clib.__cleanup = NULL;
+   _reclaim_reent (_REENT);
+ 
+   if (InterlockedDecrement (&MT_INTERFACE->threadcount) == 0)
+-- 
+2.31.1
+
+Previous message (by thread): [PATCH 0/1] Make __sdidinit unused
+Next message (by thread): [PATCH 1/1] Make __sdidinit unused
+Messages sorted by: [ date ] [ thread ] [ subject ] [ author ]
+More information about the Newlib mailing list
